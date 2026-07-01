@@ -10,9 +10,8 @@ import com.chaquo.python.android.AndroidPlatform;
 import com.github.catvod.crawler.Spider;
 import com.github.catvod.crawler.SpiderNull;
 
+import com.github.catvod.net.OkHttp;
 import com.github.tvbox.osc.util.OkGoHelper;
-import com.github.tvbox.osc.util.urlhttp.OKCallBack;
-import com.github.tvbox.osc.util.urlhttp.OkHttpUtil;
 
 
 import org.json.JSONArray;
@@ -33,7 +32,8 @@ import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 
-import okhttp3.Call;
+import okhttp3.HttpUrl;
+import okhttp3.Request;
 import okhttp3.Response;
 
 public class PythonLoader {
@@ -95,12 +95,16 @@ public class PythonLoader {
         this.app = app;
         setSdk(this.app);
         if (pyInstance == null) {
-            if (!Python.isStarted()) {
-                androidPlatform = new AndroidPlatform(app);
-                Python.start(androidPlatform);
+            try {
+                if (!Python.isStarted()) {
+                    androidPlatform = new AndroidPlatform(app);
+                    Python.start(androidPlatform);
+                }
+                pyInstance = Python.getInstance();
+                pyApp = pyInstance.getModule("app");
+            } catch (Throwable th) {
+                throw new RuntimeException(th);
             }
-            pyInstance = Python.getInstance();
-            pyApp = pyInstance.getModule("app");
         }
         File pyCache = new File(app.getCacheDir(), "py");
         if (!pyCache.exists()) pyCache.mkdirs();
@@ -192,7 +196,7 @@ public class PythonLoader {
     public void getPort() {
         if (port <= 0) {
             for (int i = 9978; i < 10000; i++) {
-                if (OkHttpUtil.string("http://127.0.0.1:" + i + "/proxy?do=ck&api=python", null).equals("ok")) {
+                if (OkHttp.string("http://127.0.0.1:" + i + "/proxy?do=ck&api=python", null).equals("ok")) {
                     port = i;
                     return;
                 }
@@ -226,19 +230,16 @@ public class PythonLoader {
         if (streamCallback != null) {
             return streamCallback.get(url, str2map(param), str2map(header));
         } else {
-            OKCallBack.OKCallBackDefault callBack = new OKCallBack.OKCallBackDefault() {
-                @Override
-                protected void onFailure(Call call, Exception e) {
-
-                }
-
-                @Override
-                protected void onResponse(Response response) {
-
-                }
-            };
-            OkHttpUtil.get(OkGoHelper.getDefaultClient(), url, str2map(param), str2map(header), callBack);
-            return callBack.getResult().body().byteStream();
+            try {
+                okhttp3.OkHttpClient client = OkGoHelper.getDefaultClient();
+                if (client == null) client = OkHttp.client();
+                Response response = client.newCall(getRequest(url, str2map(param), str2map(header))).execute();
+                if (response.body() != null) return response.body().byteStream();
+                response.close();
+                return new ByteArrayInputStream(new byte[0]);
+            } catch (Exception e) {
+                return new ByteArrayInputStream(new byte[0]);
+            }
         }
     }
 
@@ -246,8 +247,31 @@ public class PythonLoader {
         if (stringCallback != null) {
             return stringCallback.get(url, str2map(header));
         } else {
-            return OkHttpUtil.string(url, str2map(header));
+            return OkHttp.string(url, str2map(header));
         }
+    }
+
+    private Request getRequest(String url, Map<String, String> paramsMap, Map<String, String> headerMap) {
+        HttpUrl httpUrl = HttpUrl.parse(url);
+        if (httpUrl != null && paramsMap != null && !paramsMap.isEmpty()) {
+            HttpUrl.Builder builder = httpUrl.newBuilder();
+            for (Map.Entry<String, String> entry : paramsMap.entrySet()) {
+                builder.addQueryParameter(entry.getKey(), entry.getValue());
+            }
+            httpUrl = builder.build();
+        }
+        Request.Builder builder = new Request.Builder();
+        if (httpUrl != null) {
+            builder.url(httpUrl);
+        } else {
+            builder.url(url);
+        }
+        if (headerMap != null) {
+            for (Map.Entry<String, String> entry : headerMap.entrySet()) {
+                builder.addHeader(entry.getKey(), entry.getValue());
+            }
+        }
+        return builder.build();
     }
 
     FileStreamCallback streamCallback;

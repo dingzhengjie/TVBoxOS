@@ -117,6 +117,10 @@ public class VodController extends BaseController {
                             net_play_speed.setVisibility(VISIBLE);
                         }
                         backBtn.setVisibility(INVISIBLE);
+                        mHandler.removeCallbacks(lockRunnable);
+                        if (mLockView != null) {
+                            mLockView.setVisibility(INVISIBLE);
+                        }
                         break;
                     }
                     case 1004: { // 设置速度
@@ -184,6 +188,7 @@ public class VodController extends BaseController {
 
     LockRunnable lockRunnable = new LockRunnable();
     private boolean isLock = false;
+    private boolean previewMode = false;
     Handler myHandle;
     Runnable myRunnable;
     int myHandleSeconds = 10000;//闲置多少毫秒秒关闭底栏  默认6秒
@@ -213,9 +218,26 @@ public class VodController extends BaseController {
     };
     
     private void showLockView() {
+        if (previewMode) {
+            mHandler.removeCallbacks(lockRunnable);
+            if (mLockView != null) {
+                mLockView.setVisibility(INVISIBLE);
+            }
+            return;
+        }
         mLockView.setVisibility(ScreenUtils.isTv(getContext()) ? INVISIBLE : VISIBLE);
         mHandler.removeCallbacks(lockRunnable);
-        mHandler.postDelayed(lockRunnable, 3000);
+        if (isLock) {
+            mHandler.postDelayed(lockRunnable, 3000);
+        }
+    }
+
+    public void setPreviewMode(boolean previewMode) {
+        this.previewMode = previewMode;
+        mHandler.removeCallbacks(lockRunnable);
+        if (mLockView != null) {
+            mLockView.setVisibility(INVISIBLE);
+        }
     }
 
     @Override
@@ -290,6 +312,9 @@ public class VodController extends BaseController {
         rootView.setOnTouchListener(new OnTouchListener() {
             @Override
             public boolean onTouch(View v, MotionEvent event) {
+                if (previewMode) {
+                    return false;
+                }
                 if (isLock) {
                     if (event.getAction() == MotionEvent.ACTION_UP) {
                         showLockView();

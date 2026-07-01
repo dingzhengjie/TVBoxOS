@@ -35,6 +35,7 @@ import com.github.tvbox.osc.api.ApiConfig;
 import com.github.tvbox.osc.base.BaseActivity;
 import com.github.tvbox.osc.base.BaseLazyFragment;
 import com.github.tvbox.osc.bean.AbsSortXml;
+import com.github.tvbox.osc.bean.Movie;
 import com.github.tvbox.osc.bean.MovieSort;
 import com.github.tvbox.osc.bean.SourceBean;
 import com.github.tvbox.osc.event.RefreshEvent;
@@ -96,6 +97,11 @@ public class HomeActivity extends BaseActivity {
     private int currentSelected = 0;
     private int sortFocused = 0;
     public View sortFocusView = null;
+    private String loadingSourceKey;
+    private String previousHomeName;
+    private SourceBean previousHomeSource;
+    private boolean homeSortLoading = false;
+    private boolean refreshHomeRec = false;
     private final Handler mHandler = new Handler();
     private long mExitTime = 0;
     private boolean eventBusRegistered = false;
@@ -219,8 +225,13 @@ public class HomeActivity extends BaseActivity {
             public boolean onInBorderKeyEvent(int direction, View view) {
                 if (direction == View.FOCUS_UP) {
                     BaseLazyFragment baseLazyFragment = fragments.get(sortFocused);
-                    if ((baseLazyFragment instanceof GridFragment)) {
+                    if (baseLazyFragment instanceof UserFragment) {
+                        refreshHomeSort();
+                        return true;
+                    }
+                    if (baseLazyFragment instanceof GridFragment) {
                         ((GridFragment) baseLazyFragment).forceRefresh();
+                        return true;
                     }
                 }
                 if (direction != View.FOCUS_DOWN) {
@@ -244,17 +255,14 @@ public class HomeActivity extends BaseActivity {
                     File cspCacheDir = new File(FileUtils.getFilePath() + "/csp/" + MD5.string2MD5(jarSource) + ".jar");
                     File jarCacheDir = new File(FileUtils.getCachePath() + "/jar/" + MD5.string2MD5(jarSource) + ".jar");
                     File jarFullCacheDir = new File(FileUtils.getCachePath() + "/jar/" + MD5.string2MD5(jarUrl) + ".jar");
-                    Toast.makeText(mContext, "jar缓存已清除", Toast.LENGTH_LONG).show();
-                    if (!cspCacheDir.exists() && !jarCacheDir.exists() && !jarFullCacheDir.exists()){
-                        refreshHome();
-                        return;
-                    }
+                    Toast.makeText(mContext, "缓存已清除", Toast.LENGTH_LONG).show();
                     new Thread(() -> {
                         try {
                             FileUtils.deleteFile(cspCacheDir);
                             FileUtils.deleteFile(jarCacheDir);
                             FileUtils.deleteFile(jarFullCacheDir);
-                            ApiConfig.get().clearJarLoader();
+                            FileUtils.clearSpiderCacheFiles();
+                            ApiConfig.get().clearSpiderCache();
                             refreshHome();
                         } catch (Exception e) {
                             e.printStackTrace();
@@ -289,27 +297,42 @@ public class HomeActivity extends BaseActivity {
                     skipNextUpdate = false;
                     return;
                 }
-                showSuccess();
-                if (absXml != null && absXml.classes != null && absXml.classes.sortList != null) {
-                    sortAdapter.setNewData(DefaultConfig.adjustSort(ApiConfig.get().getHomeSourceBean().getKey(), absXml.classes.sortList, true));
-                } else {
-                    sortAdapter.setNewData(DefaultConfig.adjustSort(ApiConfig.get().getHomeSourceBean().getKey(), new ArrayList<>(), true));
+                if (!homeSortLoading && loadingSourceKey == null) {
+                    return;
                 }
-                initViewPager(absXml);
+                if (absXml != null && absXml.sourceKey != null && loadingSourceKey != null && !loadingSourceKey.equals(absXml.sourceKey)) {
+                    return;
+                }
                 SourceBean home = ApiConfig.get().getHomeSourceBean();
+                showSuccess();
+                clearHomePages();
+                List<MovieSort.SortData> newSortData;
+                if (absXml != null && absXml.classes != null && absXml.classes.sortList != null) {
+                    newSortData = DefaultConfig.adjustSort(ApiConfig.get().getHomeSourceBean().getKey(), absXml.classes.sortList, true);
+                } else {
+                    newSortData = DefaultConfig.adjustSort(ApiConfig.get().getHomeSourceBean().getKey(), new ArrayList<>(), true);
+                }
+                updateSortData(newSortData);
+                initViewPager(absXml);
+                updateHomeRec(absXml);
                 if (home != null && home.getName() != null && !home.getName().isEmpty()) tvName.setText(home.getName());
                 tvName.clearAnimation();
+                homeSortLoading = false;
+                loadingSourceKey = null;
+                previousHomeName = null;
+                previousHomeSource = null;
             }
         });
     }
 
     private boolean dataInitOk = false;
     private boolean jarInitOk = false;
+    private boolean searchSpiderWarmStarted = false;
     private TipDialog mConfigErrorDialog;
 
     private void initData() {
         if (dataInitOk && jarInitOk) {
-            sourceViewModel.getSort(ApiConfig.get().getHomeSourceBean().getKey());
+            loadHomeSort(false);
             if (hasPermission(Manifest.permission.WRITE_EXTERNAL_STORAGE)) {
                 LOG.e("有");
             } else {
@@ -318,6 +341,8 @@ public class HomeActivity extends BaseActivity {
             if (!useCacheConfig && Hawk.get(HawkConfig.DEFAULT_LOAD_LIVE, false)) {
                 jumpActivity(LivePlayActivity.class);
             }
+            //爬虫预热 仅首次加载
+            if(!useCacheConfig)warmSearchSpidersOnce();
             return;
         }
         tvNameAnimation();
@@ -454,11 +479,38 @@ public class HomeActivity extends BaseActivity {
         }, this);
     }
 
+    private void warmSearchSpidersOnce() {
+        if (searchSpiderWarmStarted) return;
+        searchSpiderWarmStarted = true;
+        ApiConfig.get().warmSearchSpiders();
+    }
+
+    private void loadHomeSort(boolean keepCurrentContent) {
+        SourceBean home = ApiConfig.get().getHomeSourceBean();
+        homeSortLoading = keepCurrentContent;
+        if (keepCurrentContent && home != null && home.getName() != null && !home.getName().isEmpty()) {
+            previousHomeName = tvName.getText() == null ? null : tvName.getText().toString();
+            tvName.setText(home.getName());
+        }
+        tvNameAnimation();
+        if (home == null) {
+            loadingSourceKey = null;
+            if (!keepCurrentContent) showLoading();
+            sourceViewModel.getSort(null);
+            return;
+        }
+        loadingSourceKey = home.getKey();
+        if (!keepCurrentContent) {
+            showLoading();
+        }
+        sourceViewModel.getSort(loadingSourceKey);
+    }
+
     private void initViewPager(AbsSortXml absXml) {
         if (sortAdapter.getData().size() > 0) {
             for (MovieSort.SortData data : sortAdapter.getData()) {
                 if (data.id.equals("my0")) {
-                    if (Hawk.get(HawkConfig.HOME_REC, 0) == 1 && absXml != null && absXml.videoList != null && absXml.videoList.size() > 0) {
+                    if (Hawk.get(HawkConfig.HOME_REC, HawkConfig.DEFAULT_HOME_REC) == 1 && absXml != null && absXml.videoList != null && absXml.videoList.size() > 0) {
                         fragments.add(UserFragment.newInstance(absXml.videoList));
                     } else {
                         fragments.add(UserFragment.newInstance(null));
@@ -482,10 +534,55 @@ public class HomeActivity extends BaseActivity {
         }
     }
 
+    private void clearHomePages() {
+        mHandler.removeCallbacks(mDataRunnable);
+        currentSelected = 0;
+        sortFocused = 0;
+        sortChange = false;
+        sortFocusView = null;
+        currentView = null;
+        if (pageAdapter != null) {
+            mViewPager.setAdapter(null);
+            pageAdapter.removeAll();
+            pageAdapter = null;
+        } else if (!fragments.isEmpty()) {
+            fragments.clear();
+        }
+    }
+
+    private void updateSortData(List<MovieSort.SortData> newSortData) {
+        if (newSortData == null) {
+            newSortData = new ArrayList<>();
+        }
+        List<MovieSort.SortData> oldSortData = sortAdapter.getData();
+        if (oldSortData.isEmpty()
+                || newSortData.isEmpty()
+                || oldSortData.get(0) == null
+                || newSortData.get(0) == null
+                || !"my0".equals(oldSortData.get(0).id)
+                || !"my0".equals(newSortData.get(0).id)) {
+            sortAdapter.setNewData(newSortData);
+            return;
+        }
+        int oldTailCount = oldSortData.size() - 1;
+        if (oldTailCount > 0) {
+            oldSortData.subList(1, oldSortData.size()).clear();
+            sortAdapter.notifyItemRangeRemoved(1, oldTailCount);
+        }
+        if (newSortData.size() > 1) {
+            oldSortData.addAll(newSortData.subList(1, newSortData.size()));
+            sortAdapter.notifyItemRangeInserted(1, newSortData.size() - 1);
+        }
+    }
+
     @SuppressLint("NotifyDataSetChanged")
     @Override
     public void onBackPressed() {
         // 打断加载
+        if (homeSortLoading) {
+            cancelHomeSortLoading();
+            return;
+        }
         if (isLoading()) {
             refreshEmpty();
             return;
@@ -581,6 +678,8 @@ public class HomeActivity extends BaseActivity {
             if (currentView != null) {
                 showFilterIcon((int) event.obj);
             }
+        } else if (event.type == RefreshEvent.TYPE_HOME_SOURCE_CHANGE) {
+            refreshHome(false);
         }
     }
 
@@ -726,8 +825,9 @@ public class HomeActivity extends BaseActivity {
             @Override
             public void click(SourceBean value, int pos) {
                 dismissSiteSwitchDialog();
+                previousHomeSource = ApiConfig.get().getHomeSourceBean();
                 ApiConfig.get().setSourceBean(value);
-                refreshHome();
+                refreshHome(false);
             }
             @Override
             public String getDisplay(SourceBean val) {
@@ -749,11 +849,36 @@ public class HomeActivity extends BaseActivity {
 
     private void refreshHome()
     {
+        refreshHome(true);
+    }
+
+    private void refreshHomeSort() {
+        refreshHomeRec = true;
+        if (UserFragment.homeHotVodAdapter != null) {
+            UserFragment.homeHotVodAdapter.setNewData(new ArrayList<Movie.Video>());
+        }
+        SourceBean home = ApiConfig.get().getHomeSourceBean();
+        if (home != null) {
+            SourceViewModel.clearSortCache(home.getKey());
+        }
+        refreshHome(false);
+    }
+
+    private void updateHomeRec(AbsSortXml absXml) {
+        if (!refreshHomeRec) return;
+        refreshHomeRec = false;
+        if (Hawk.get(HawkConfig.HOME_REC, HawkConfig.DEFAULT_HOME_REC) != 1) return;
+        if (absXml == null || absXml.videoList == null || UserFragment.homeHotVodAdapter == null) return;
+        UserFragment.homeHotVodAdapter.setNewData(absXml.videoList);
+    }
+
+    private void refreshHome(final boolean restart)
+    {
         if (Thread.currentThread() != android.os.Looper.getMainLooper().getThread()) {
             mHandler.post(new Runnable() {
                 @Override
                 public void run() {
-                    refreshHome();
+                    refreshHome(restart);
                 }
             });
             return;
@@ -762,6 +887,10 @@ public class HomeActivity extends BaseActivity {
             return;
         }
         dismissHomeDialogs();
+        if (!restart) {
+            loadHomeSort(true);
+            return;
+        }
         Intent intent = new Intent(getApplicationContext(), HomeActivity.class);
         intent.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TASK);
         Bundle bundle = new Bundle();
@@ -801,13 +930,30 @@ public class HomeActivity extends BaseActivity {
     {
         skipNextUpdate=true;
         showSuccess();
+        cancelHomeSortLoading();
+        clearHomePages();
         sortAdapter.setNewData(DefaultConfig.adjustSort(ApiConfig.get().getHomeSourceBean().getKey(), new ArrayList<>(), true));
         initViewPager(null);
         tvName.clearAnimation();
     }
 
+    private void cancelHomeSortLoading() {
+        homeSortLoading = false;
+        loadingSourceKey = null;
+        tvName.clearAnimation();
+        if (previousHomeSource != null) {
+            ApiConfig.get().setSourceBean(previousHomeSource);
+        }
+        if (previousHomeName != null && !previousHomeName.isEmpty()) {
+            tvName.setText(previousHomeName);
+        }
+        previousHomeSource = null;
+        previousHomeName = null;
+    }
+
     private void tvNameAnimation()
     {
+        tvName.clearAnimation();
         AlphaAnimation blinkAnimation = new AlphaAnimation(0.0f, 1.0f);
         blinkAnimation.setDuration(500);
         blinkAnimation.setStartOffset(20);

@@ -62,11 +62,10 @@ import com.github.tvbox.osc.util.EpgUtil;
 import com.github.tvbox.osc.util.FastClickCheckUtil;
 import com.github.tvbox.osc.util.HawkConfig;
 import com.github.tvbox.osc.util.LOG;
+import com.github.tvbox.osc.util.OkGoHelper;
 import com.github.tvbox.osc.util.PlayerHelper;
 import com.github.tvbox.osc.util.HistoryHelper;
 import com.github.tvbox.osc.util.live.TxtSubscribe;
-import com.github.tvbox.osc.util.urlhttp.CallBackUtil;
-import com.github.tvbox.osc.util.urlhttp.UrlHttpUtil;
 import com.google.gson.JsonArray;
 import org.apache.commons.lang3.StringUtils;
 
@@ -77,7 +76,6 @@ import com.lzy.okgo.model.Response;
 import com.orhanobut.hawk.Hawk;
 import com.owen.tvrecyclerview.widget.TvRecyclerView;
 import com.owen.tvrecyclerview.widget.V7LinearLayoutManager;
-import com.squareup.picasso.Picasso;
 
 import org.json.JSONArray;
 import org.json.JSONException;
@@ -88,6 +86,7 @@ import org.w3c.dom.Node;
 import org.w3c.dom.NodeList;
 import org.xml.sax.InputSource;
 
+import java.io.IOException;
 import java.io.StringReader;
 import java.net.URLEncoder;
 import java.text.ParseException;
@@ -617,47 +616,87 @@ public class LivePlayActivity extends BaseActivity {
 
     private void requestEpg(String url, Date date, String channelNameReal, String finalEpgTagName, String savedEpgKey,
                             ArrayList<String> epgQueryNames, SimpleDateFormat timeFormat, int queryIndex) {
-        UrlHttpUtil.get(url, new CallBackUtil.CallBackString() {
-            public void onFailure(int i, String str) {
-                if (!isCurrentEpgRequest(savedEpgKey)) return;
-                if (requestNextEpgQueryName(date, channelNameReal, finalEpgTagName, savedEpgKey, epgQueryNames, timeFormat, queryIndex)) {
-                    return;
-                }
-                if (requestDefaultEpgOnFailure(date, channelNameReal, finalEpgTagName, savedEpgKey, epgQueryNames, timeFormat, queryIndex)) {
-                    return;
-                }
-                updateEpgPanelState(false);
-//                showEpg(date, new ArrayList<>());
-//                showBottomEpg();
+        okhttp3.OkHttpClient client = OkGoHelper.getDefaultClient();
+        if (client == null) client = com.github.catvod.net.OkHttp.client();
+        client.newCall(new okhttp3.Request.Builder().url(url).build()).enqueue(new okhttp3.Callback() {
+            @Override
+            public void onFailure(okhttp3.Call call, IOException e) {
+                mHandler.post(new Runnable() {
+                    @Override
+                    public void run() {
+                        onEpgRequestFailure(date, channelNameReal, finalEpgTagName, savedEpgKey, epgQueryNames, timeFormat, queryIndex);
+                    }
+                });
             }
 
-            public void onResponse(String paramString) {
-                if (!isCurrentEpgRequest(savedEpgKey)) return;
-                if (paramString == null || paramString.trim().isEmpty()) {
-                    updateEpgPanelState(false);
+            @Override
+            public void onResponse(okhttp3.Call call, okhttp3.Response response) throws IOException {
+                if (response.code() != 200) {
+                    response.close();
+                    mHandler.post(new Runnable() {
+                        @Override
+                        public void run() {
+                            onEpgRequestFailure(date, channelNameReal, finalEpgTagName, savedEpgKey, epgQueryNames, timeFormat, queryIndex);
+                        }
+                    });
                     return;
                 }
-                LOG.i("echo-epgTagName:"+channelNameReal);
-                ArrayList<Epginfo> arrayList = new ArrayList<Epginfo>();
+                final String body;
                 try {
-                    if (isXmlEpgResponse(paramString)) {
-                        arrayList = parseXmlEpg(paramString, finalEpgTagName, date);
-                    } else if (paramString != null && (paramString.contains("epg_data") || paramString.trim().startsWith("{"))) {
-                        arrayList = parseJsonEpg(paramString, date);
+                    body = response.body() != null ? response.body().string() : "";
+                } finally {
+                    response.close();
+                }
+                mHandler.post(new Runnable() {
+                    @Override
+                    public void run() {
+                        onEpgRequestResponse(body, date, channelNameReal, finalEpgTagName, savedEpgKey, epgQueryNames, timeFormat, queryIndex);
                     }
-
-                } catch (JSONException jSONException) {
-                    jSONException.printStackTrace();
-                }
-                if (arrayList.isEmpty() && requestNextEpgQueryName(date, channelNameReal, finalEpgTagName, savedEpgKey, epgQueryNames, timeFormat, queryIndex)) {
-                    return;
-                }
-                hsEpg.put(savedEpgKey, arrayList);
-                if (!isCurrentEpgRequest(savedEpgKey)) return;
-                showEpg(date, arrayList);
-                showBottomEpg();
+                });
             }
         });
+    }
+
+    private void onEpgRequestFailure(Date date, String channelNameReal, String finalEpgTagName, String savedEpgKey,
+                                     ArrayList<String> epgQueryNames, SimpleDateFormat timeFormat, int queryIndex) {
+        if (!isCurrentEpgRequest(savedEpgKey)) return;
+        if (requestNextEpgQueryName(date, channelNameReal, finalEpgTagName, savedEpgKey, epgQueryNames, timeFormat, queryIndex)) {
+            return;
+        }
+        if (requestDefaultEpgOnFailure(date, channelNameReal, finalEpgTagName, savedEpgKey, epgQueryNames, timeFormat, queryIndex)) {
+            return;
+        }
+        updateEpgPanelState(false);
+//        showEpg(date, new ArrayList<>());
+//        showBottomEpg();
+    }
+
+    private void onEpgRequestResponse(String paramString, Date date, String channelNameReal, String finalEpgTagName,
+                                      String savedEpgKey, ArrayList<String> epgQueryNames, SimpleDateFormat timeFormat, int queryIndex) {
+        if (!isCurrentEpgRequest(savedEpgKey)) return;
+        if (paramString == null || paramString.trim().isEmpty()) {
+            updateEpgPanelState(false);
+            return;
+        }
+        LOG.i("echo-epgTagName:" + channelNameReal);
+        ArrayList<Epginfo> arrayList = new ArrayList<Epginfo>();
+        try {
+            if (isXmlEpgResponse(paramString)) {
+                arrayList = parseXmlEpg(paramString, finalEpgTagName, date);
+            } else if (paramString.contains("epg_data") || paramString.trim().startsWith("{")) {
+                arrayList = parseJsonEpg(paramString, date);
+            }
+
+        } catch (JSONException jSONException) {
+            jSONException.printStackTrace();
+        }
+        if (arrayList.isEmpty() && requestNextEpgQueryName(date, channelNameReal, finalEpgTagName, savedEpgKey, epgQueryNames, timeFormat, queryIndex)) {
+            return;
+        }
+        hsEpg.put(savedEpgKey, arrayList);
+        if (!isCurrentEpgRequest(savedEpgKey)) return;
+        showEpg(date, arrayList);
+        showBottomEpg();
     }
 
     private boolean requestDefaultEpgOnFailure(Date date, String channelNameReal, String finalEpgTagName, String savedEpgKey,
@@ -1052,7 +1091,6 @@ public class LivePlayActivity extends BaseActivity {
             return;
         }
         if (StringUtils.isEmpty(logoUrl)) {
-            Picasso.get().cancelRequest(imgLiveIcon);
             imgLiveIcon.setImageDrawable(null);
             liveIconNullBg.setVisibility(View.VISIBLE);
             liveIconNullText.setVisibility(View.VISIBLE);
@@ -1060,7 +1098,7 @@ public class LivePlayActivity extends BaseActivity {
             liveIconNullText.setText("" + channel_Name.getChannelNum());
         } else {
             imgLiveIcon.setVisibility(View.VISIBLE);
-            Picasso.get().load(logoUrl).into(imgLiveIcon);
+            com.github.tvbox.osc.util.ImgUtil.load(DefaultConfig.checkReplaceProxy(logoUrl), imgLiveIcon, 1, 0, 0, channel_Name.getChannelName(), ImageView.ScaleType.CENTER_INSIDE);
             liveIconNullBg.setVisibility(View.INVISIBLE);
             liveIconNullText.setVisibility(View.INVISIBLE);
         }
@@ -1650,6 +1688,10 @@ public class LivePlayActivity extends BaseActivity {
                 || (changeSource && currentLiveChannelItem.getSourceNum() == 1)) {
            // showChannelInfo();
             return true;
+        }
+        ArrayList<LiveChannelItem> groupChannels = getLiveChannels(channelGroupIndex);
+        if (groupChannels == null || groupChannels.isEmpty() || liveChannelIndex < 0 || liveChannelIndex >= groupChannels.size()) {
+            return false;
         }
         boolean showPreviousFrame = currentLiveChannelItem != null && mVideoView != null && mVideoView.isPlaying();
         allowLiveSwitchPlayer = true;
@@ -2783,12 +2825,6 @@ public class LivePlayActivity extends BaseActivity {
         LOG.i("echo-live-url:"+url);
 
         if(url.contains(".py") || url.contains(".js")){
-            if ((url.contains(".py") || url.contains(".js")) && !hasPermission(Manifest.permission.WRITE_EXTERNAL_STORAGE)) {
-                // 权限不足时，直接设置默认播放列表
-                Toast.makeText(App.getInstance(), "该源需要存储权限", Toast.LENGTH_SHORT).show();
-                setEmptyLiveChannelList();
-                return;
-            }
             String finalUrl = url;
             Runnable waitResponse = new Runnable() {
                 @Override
