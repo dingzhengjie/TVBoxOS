@@ -1684,6 +1684,9 @@ public class LivePlayActivity extends BaseActivity {
     }
 
     private boolean playChannel(int channelGroupIndex, int liveChannelIndex, boolean changeSource) {
+        if (!changeSource) {
+            currentLiveChangeSourceTimes = 0;
+        }
         if ((channelGroupIndex == currentChannelGroupIndex && liveChannelIndex == currentLiveChannelIndex && !changeSource)
                 || (changeSource && currentLiveChannelItem.getSourceNum() == 1)) {
            // showChannelInfo();
@@ -2251,9 +2254,9 @@ public class LivePlayActivity extends BaseActivity {
                     case VideoView.STATE_ERROR:
                     case VideoView.STATE_PLAYBACK_COMPLETED:
                         // 错误或播放结束状态：播放器遇到错误或播放完毕时，
-                        // 启动自动换源任务，等待3秒后尝试切换至备选源
+                        // 启动自动换源任务，尝试切换至备选源
                         hideSwitchChannelSnapshot();
-                        mHandler.postDelayed(mConnectTimeoutChangeSourceRun, 3500);
+                        mHandler.postDelayed(mConnectTimeoutChangeSourceRun, 500);
                         break;
                     case VideoView.STATE_PREPARING:
                     case VideoView.STATE_BUFFERING:
@@ -2306,11 +2309,8 @@ public class LivePlayActivity extends BaseActivity {
     private Runnable mConnectTimeoutChangeSourceRun = new Runnable() {
         @Override
         public void run() {
-            if (switchLivePlayerAndReplay()) {
-                return;
-            }
             currentLiveChangeSourceTimes++;
-            if (currentLiveChannelItem.getSourceNum() == currentLiveChangeSourceTimes) {
+            if (currentLiveChannelItem.getSourceNum() <= currentLiveChangeSourceTimes) {
                 currentLiveChangeSourceTimes = 0;
                 Integer[] groupChannelIndex = getNextChannel(Hawk.get(HawkConfig.LIVE_CHANNEL_REVERSE, false) ? -1 : 1);
                 playChannel(groupChannelIndex[0], groupChannelIndex[1], false);
