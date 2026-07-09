@@ -50,6 +50,12 @@ public abstract class BaseActivity extends AppCompatActivity implements CustomAd
             refreshAutoSize();
         }
     };
+    private final Runnable hideSysBarRunnable = new Runnable() {
+        @Override
+        public void run() {
+            hideSysBar();
+        }
+    };
 
     @Override
     protected void onCreate(@Nullable Bundle savedInstanceState) {
@@ -65,6 +71,7 @@ public abstract class BaseActivity extends AppCompatActivity implements CustomAd
         super.onCreate(savedInstanceState);
         setContentView(getLayoutResID());
         mContext = this;
+        initSystemUiListener();
         CutoutUtil.adaptCutoutAboveAndroidP(mContext, true);//设置刘海
         AppManager.getInstance().addActivity(this);
         init();
@@ -87,7 +94,23 @@ public abstract class BaseActivity extends AppCompatActivity implements CustomAd
             uiOptions |= View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN;
             uiOptions |= View.SYSTEM_UI_FLAG_HIDE_NAVIGATION;
             uiOptions |= View.SYSTEM_UI_FLAG_FULLSCREEN;
+            uiOptions |= View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY;
             getWindow().getDecorView().setSystemUiVisibility(uiOptions);
+        }
+    }
+
+    private void initSystemUiListener() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.KITKAT) {
+            final View decorView = getWindow().getDecorView();
+            decorView.setOnSystemUiVisibilityChangeListener(new View.OnSystemUiVisibilityChangeListener() {
+                @Override
+                public void onSystemUiVisibilityChange(int visibility) {
+                    if ((visibility & View.SYSTEM_UI_FLAG_HIDE_NAVIGATION) == 0) {
+                        decorView.removeCallbacks(hideSysBarRunnable);
+                        decorView.postDelayed(hideSysBarRunnable, 300);
+                    }
+                }
+            });
         }
     }
 
@@ -95,6 +118,7 @@ public abstract class BaseActivity extends AppCompatActivity implements CustomAd
     protected void onPause() {
         super.onPause();
         getWindow().getDecorView().removeCallbacks(refreshAutoSizeRunnable);
+        getWindow().getDecorView().removeCallbacks(hideSysBarRunnable);
     }
 
     @Override
