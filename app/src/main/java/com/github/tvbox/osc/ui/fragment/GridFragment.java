@@ -385,6 +385,7 @@ public class GridFragment extends BaseLazyFragment {
 
     public void scrollTop() {
         isTop = true;
+        if (mGridView == null) return;
         mGridView.scrollToPosition(0);
     }
 
@@ -461,6 +462,7 @@ public class GridFragment extends BaseLazyFragment {
     }
 
     public void forceRefresh() {
+        if (mGridView == null || gridAdapter == null || sourceViewModel == null) return;
         if (isRequesting) return;
         page = 1;
         initData();

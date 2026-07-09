@@ -4,7 +4,13 @@ import android.app.Activity;
 import android.annotation.SuppressLint;
 import android.content.Context;
 import android.content.pm.ActivityInfo;
+import android.graphics.Canvas;
 import android.graphics.Color;
+import android.graphics.ColorFilter;
+import android.graphics.Paint;
+import android.graphics.PixelFormat;
+import android.graphics.Rect;
+import android.graphics.drawable.Drawable;
 import android.os.Build;
 import android.os.Handler;
 import android.os.Message;
@@ -144,6 +150,7 @@ public class VodController extends BaseController {
     TextView mCurrentTime;
     TextView mTotalTime;
     boolean mIsDragging;
+    private boolean mSeekBarKeyTracking;
     LinearLayout mProgressRoot;
     TextView mProgressText;
     ImageView mProgressIcon;
@@ -249,6 +256,9 @@ public class VodController extends BaseController {
         mPlayTitle1 = findViewById(R.id.tv_info_name1);
         mPlayLoadNetSpeedRightTop = findViewById(R.id.tv_play_load_net_speed_right_top);
         mSeekBar = findViewById(R.id.seekBar);
+        CircleThumbDrawable seekThumb = new CircleThumbDrawable(getContext());
+        mSeekBar.setThumb(seekThumb);
+        mSeekBar.setThumbOffset(seekThumb.getIntrinsicWidth() / 2);
         mProgressRoot = findViewById(R.id.tv_progress_container);
         mProgressIcon = findViewById(R.id.tv_progress_icon);
         mProgressText = findViewById(R.id.tv_progress_text);
@@ -366,29 +376,109 @@ public class VodController extends BaseController {
                     return;
                 }
 
-                long duration = mControlWrapper.getDuration();
-                long newPosition = (duration * progress) / seekBar.getMax();
-                if (mCurrentTime != null)
-                    mCurrentTime.setText(stringForTime(safeTimeMs(newPosition)));
+                updateSeekBarTime(progress);
             }
 
             @Override
             public void onStartTrackingTouch(SeekBar seekBar) {
-                mIsDragging = true;
-                mControlWrapper.stopProgress();
-                mControlWrapper.stopFadeOut();
+                beginSeekBarTracking();
             }
 
             @Override
             public void onStopTrackingTouch(SeekBar seekBar) {
-                myHandle.removeCallbacks(myRunnable);
-                myHandle.postDelayed(myRunnable, myHandleSeconds);
-                long duration = mControlWrapper.getDuration();
-                long newPosition = (duration * seekBar.getProgress()) / seekBar.getMax();
-                mControlWrapper.seekTo(newPosition);
-                mIsDragging = false;
-                mControlWrapper.startProgress();
-                mControlWrapper.startFadeOut();
+                finishSeekBarTracking();
+            }
+        });
+        mSeekBar.setOnHoverListener(new OnHoverListener() {
+            @Override
+            public boolean onHover(View v, MotionEvent event) {
+                switch (event.getAction()) {
+                    case MotionEvent.ACTION_HOVER_ENTER:
+                        keepSeekBarActive();
+                        v.setSelected(true);
+                        v.refreshDrawableState();
+                        v.jumpDrawablesToCurrentState();
+                        v.invalidate();
+                        break;
+                    case MotionEvent.ACTION_HOVER_MOVE:
+                        keepSeekBarActive();
+                        break;
+                    case MotionEvent.ACTION_HOVER_EXIT:
+                        v.setSelected(false);
+                        v.refreshDrawableState();
+                        v.jumpDrawablesToCurrentState();
+                        v.invalidate();
+                        break;
+                }
+                return false;
+            }
+        });
+        mSeekBar.setOnFocusChangeListener(new OnFocusChangeListener() {
+            @Override
+            public void onFocusChange(View v, boolean hasFocus) {
+                if (hasFocus) {
+                    keepSeekBarActive();
+                    v.setSelected(true);
+                    v.refreshDrawableState();
+                    v.jumpDrawablesToCurrentState();
+                    v.invalidate();
+                } else {
+                    v.setSelected(false);
+                    v.refreshDrawableState();
+                    v.jumpDrawablesToCurrentState();
+                    v.invalidate();
+                    if (mSeekBarKeyTracking) {
+                        finishSeekBarTracking();
+                    }
+                }
+            }
+        });
+        mSeekBar.setOnKeyListener(new OnKeyListener() {
+            @Override
+            public boolean onKey(View v, int keyCode, KeyEvent event) {
+                if (keyCode != KeyEvent.KEYCODE_DPAD_LEFT && keyCode != KeyEvent.KEYCODE_DPAD_RIGHT) {
+                    return false;
+                }
+                if (!isInPlaybackState()) {
+                    return true;
+                }
+                if (event.getAction() == KeyEvent.ACTION_DOWN) {
+                    beginSeekBarTracking();
+                    mSeekBarKeyTracking = true;
+                    v.setSelected(true);
+                    v.jumpDrawablesToCurrentState();
+                    v.invalidate();
+                    moveSeekBarByKey(keyCode == KeyEvent.KEYCODE_DPAD_RIGHT ? 1 : -1);
+                    return true;
+                } else if (event.getAction() == KeyEvent.ACTION_UP) {
+                    v.setSelected(v.hasFocus());
+                    v.jumpDrawablesToCurrentState();
+                    v.invalidate();
+                    if (mSeekBarKeyTracking) {
+                        finishSeekBarTracking();
+                    }
+                    return true;
+                }
+                return true;
+            }
+        });
+        mSeekBar.setOnGenericMotionListener(new OnGenericMotionListener() {
+            @Override
+            public boolean onGenericMotion(View v, MotionEvent event) {
+                if (event.getAction() != MotionEvent.ACTION_SCROLL || !isInPlaybackState()) {
+                    return false;
+                }
+                float scroll = event.getAxisValue(MotionEvent.AXIS_VSCROLL);
+                if (scroll == 0) {
+                    scroll = event.getAxisValue(MotionEvent.AXIS_HSCROLL);
+                }
+                if (scroll == 0) {
+                    return false;
+                }
+                beginSeekBarTracking();
+                moveSeekBarByKey(scroll > 0 ? 1 : -1);
+                finishSeekBarTracking();
+                return true;
             }
         });
         mPlayerRetry.setOnClickListener(new OnClickListener() {
@@ -908,6 +998,86 @@ public class VodController extends BaseController {
     private VodControlListener listener;
 
     private boolean skipEnd = true;
+
+    private void keepSeekBarActive() {
+        if (myHandle != null && myRunnable != null) {
+            myHandle.removeCallbacks(myRunnable);
+            myHandle.postDelayed(myRunnable, myHandleSeconds);
+        }
+        mHandler.removeMessages(1002);
+        mHandler.removeMessages(1003);
+        if (mBottomRoot != null && mBottomRoot.getVisibility() != VISIBLE) {
+            mHandler.sendEmptyMessage(1002);
+        }
+    }
+
+    private void beginSeekBarTracking() {
+        keepSeekBarActive();
+        if (mIsDragging) {
+            return;
+        }
+        mIsDragging = true;
+        mControlWrapper.stopProgress();
+        mControlWrapper.stopFadeOut();
+    }
+
+    private void finishSeekBarTracking() {
+        keepSeekBarActive();
+        long newPosition = getSeekBarPosition(mSeekBar.getProgress());
+        mControlWrapper.seekTo(newPosition);
+        mIsDragging = false;
+        mSeekBarKeyTracking = false;
+        mControlWrapper.startProgress();
+        mControlWrapper.startFadeOut();
+    }
+
+    private long getSeekBarPosition(int progress) {
+        long duration = safeTimeMs(mControlWrapper.getDuration());
+        int max = mSeekBar == null ? 0 : mSeekBar.getMax();
+        if (duration <= 0 || max <= 0) {
+            return 0;
+        }
+        return (duration * progress) / max;
+    }
+
+    private void updateSeekBarTime(int progress) {
+        long newPosition = getSeekBarPosition(progress);
+        if (mCurrentTime != null) {
+            mCurrentTime.setText(stringForTime(safeTimeMs(newPosition)));
+        }
+    }
+
+    private void moveSeekBarByKey(int dir) {
+        int duration = safeTimeMs(mControlWrapper.getDuration());
+        if (duration <= 0 || mSeekBar.getMax() <= 0) {
+            return;
+        }
+        int progress = mSeekBar.getProgress() + getSeekBarKeyProgress(duration) * dir;
+        if (progress < 0) {
+            progress = 0;
+        } else if (progress > mSeekBar.getMax()) {
+            progress = mSeekBar.getMax();
+        }
+        mSeekBar.setProgress(progress);
+        updateSeekBarTime(progress);
+        updateSeekUI(safeTimeMs(mControlWrapper.getCurrentPosition()), safeTimeMs(getSeekBarPosition(progress)), duration);
+    }
+
+    private int getSeekBarKeyProgress(int duration) {
+        long increment;
+        if (duration > 3 * 60 * 60 * 1000) {
+            increment = 5 * 60 * 1000;
+        } else if (duration > 30 * 60 * 1000) {
+            increment = 60 * 1000;
+        } else if (duration > 15 * 60 * 1000) {
+            increment = 30 * 1000;
+        } else if (duration > 10 * 60 * 1000) {
+            increment = 15 * 1000;
+        } else {
+            increment = 10 * 1000;
+        }
+        return Math.max(1, (int) (increment * mSeekBar.getMax() / duration));
+    }
 
     @SuppressLint("SetTextI18n")
     @Override
@@ -1509,5 +1679,95 @@ public class VodController extends BaseController {
         Thunder.stop(false);//停止磁力下载
         Jianpian.finish();//停止p2p下载
         App.getInstance().setDashData(null);
+    }
+
+    private static class CircleThumbDrawable extends Drawable {
+        private final Paint fillPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+        private final Paint strokePaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+        private final int normalSize;
+        private final int activeSize;
+        private final float strokeWidth;
+        private boolean active;
+
+        CircleThumbDrawable(Context context) {
+            normalSize = dp(context, 12);
+            activeSize = dp(context, 16);
+            strokeWidth = dp(context, 2);
+            fillPaint.setStyle(Paint.Style.FILL);
+            fillPaint.setColor(Color.WHITE);
+            strokePaint.setStyle(Paint.Style.STROKE);
+            strokePaint.setStrokeWidth(strokeWidth);
+            strokePaint.setColor(Color.parseColor("#FF4081"));
+        }
+
+        @Override
+        public void draw(@NonNull Canvas canvas) {
+            Rect bounds = getBounds();
+            float cx = bounds.exactCenterX();
+            float cy = bounds.exactCenterY();
+            int size = active ? activeSize : normalSize;
+            float radius = Math.max(0, size / 2f - strokeWidth / 2f);
+            canvas.drawCircle(cx, cy, radius, fillPaint);
+            canvas.drawCircle(cx, cy, radius, strokePaint);
+        }
+
+        @Override
+        public boolean isStateful() {
+            return true;
+        }
+
+        @Override
+        protected boolean onStateChange(int[] stateSet) {
+            boolean newActive = false;
+            if (stateSet != null) {
+                for (int state : stateSet) {
+                    if (state == android.R.attr.state_pressed
+                            || state == android.R.attr.state_focused
+                            || state == android.R.attr.state_selected) {
+                        newActive = true;
+                        break;
+                    }
+                }
+            }
+            if (active == newActive) {
+                return false;
+            }
+            active = newActive;
+            invalidateSelf();
+            return true;
+        }
+
+        @Override
+        public void setAlpha(int alpha) {
+            fillPaint.setAlpha(alpha);
+            strokePaint.setAlpha(alpha);
+            invalidateSelf();
+        }
+
+        @Override
+        public void setColorFilter(ColorFilter colorFilter) {
+            fillPaint.setColorFilter(colorFilter);
+            strokePaint.setColorFilter(colorFilter);
+            invalidateSelf();
+        }
+
+        @Override
+        public int getOpacity() {
+            return PixelFormat.TRANSLUCENT;
+        }
+
+        @Override
+        public int getIntrinsicWidth() {
+            return activeSize;
+        }
+
+        @Override
+        public int getIntrinsicHeight() {
+            return activeSize;
+        }
+
+        private static int dp(Context context, float value) {
+            return (int) (value * context.getResources().getDisplayMetrics().density + 0.5f);
+        }
     }
 }

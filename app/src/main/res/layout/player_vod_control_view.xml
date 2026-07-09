@@ -509,18 +509,21 @@
             <SeekBar
                 android:id="@+id/seekBar"
                 android:layout_width="0dp"
-                android:layout_height="wrap_content"
+                android:layout_height="@dimen/vs_30"
                 android:layout_weight="16"
                 android:layout_gravity="center_vertical"
                 android:max="1000"
                 android:progressDrawable="@drawable/shape_player_control_vod_seek"
                 android:thumb="@drawable/shape_player_control_vod_seek_thumb"
+                android:thumbOffset="8dp"
                 android:background="@null"
                 android:maxHeight="@dimen/vs_6"
                 android:minHeight="@dimen/vs_6"
-                android:paddingVertical="@dimen/vs_2"
-                android:focusable="false"
-                android:focusableInTouchMode="false" />
+                android:splitTrack="false"
+                android:focusable="true"
+                android:focusableInTouchMode="true"
+                android:nextFocusLeft="@id/seekBar"
+                android:nextFocusRight="@id/seekBar" />
 
             <TextView
                 android:id="@+id/total_time"

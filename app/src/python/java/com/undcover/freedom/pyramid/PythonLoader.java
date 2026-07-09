@@ -7,6 +7,7 @@ import android.util.Base64;
 import com.chaquo.python.PyObject;
 import com.chaquo.python.Python;
 import com.chaquo.python.android.AndroidPlatform;
+import com.github.catvod.Proxy;
 import com.github.catvod.crawler.Spider;
 import com.github.catvod.crawler.SpiderNull;
 
@@ -191,22 +192,8 @@ public class PythonLoader {
         return new SpiderNull();
     }
 
-    int port = -1;
-
-    public void getPort() {
-        if (port <= 0) {
-            for (int i = 9978; i < 10000; i++) {
-                if (OkHttp.string("http://127.0.0.1:" + i + "/proxy?do=ck&api=python", null).equals("ok")) {
-                    port = i;
-                    return;
-                }
-            }
-        }
-    }
-
     public String localProxyUrl() {
-        getPort();
-        return "http://127.0.0.1:" + port + "/proxy";
+        return Proxy.getUrl(true);
     }
 
     public Map<String, String> str2map(String header) {

@@ -1,5 +1,6 @@
 package com.github.catvod.crawler;
 
+import android.os.Build;
 import android.util.Log;
 
 import com.github.catvod.crawler.python.IPyLoader;
@@ -13,28 +14,33 @@ import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
 public class pyLoader implements IPyLoader {
-    private final PythonLoader pythonLoader;
+    private PythonLoader pythonLoader;
     private final ConcurrentHashMap<String, Spider> spiders;
     private String lastConfig = null; // 记录上次的配置
 
     public pyLoader() {
-        pythonLoader = PythonLoader.getInstance().setApplication(App.getInstance());
         spiders = new ConcurrentHashMap<>();
     }
 
     @Override
     public void clear() {
         spiders.clear();
-        pythonLoader.clear();
+        if (pythonLoader != null) {
+            pythonLoader.clear();
+        }
         lastConfig = null;
         recentPyKey = null;
     }
 
     @Override
     public void setConfig(String jsonStr) {
+        if (!isPythonSupported()) {
+            Log.w("PyLoader", "python32 is disabled on Android 16+ 32-bit process.");
+            return;
+        }
         if (jsonStr != null && !jsonStr.equals(lastConfig)) {
             Log.i("PyLoader", "echo-setConfig 初始化json ");
-            pythonLoader.setConfig(jsonStr);
+            getPythonLoader().setConfig(jsonStr);
             lastConfig = jsonStr;
         }
     }
@@ -47,13 +53,17 @@ public class pyLoader implements IPyLoader {
 
     @Override
     public Spider getSpider(String key, String cls, String ext) {
+        if (!isPythonSupported()) {
+            Log.w("PyLoader", "python32 is disabled on Android 16+ 32-bit process.");
+            return new SpiderNull();
+        }
         if (spiders.containsKey(key)) {
             Log.i("PyLoader", "echo-getSpider spider缓存: " + key);
             return spiders.get(key);
         }
         try {
             Log.i("PyLoader", "echo-getSpider url: " + getPyUrl(cls, ext));
-            Spider sp = pythonLoader.getSpider(key, getPyUrl(cls, ext));
+            Spider sp = getPythonLoader().getSpider(key, getPyUrl(cls, ext));
             if (sp == null) return new SpiderNull();
             if (sp instanceof SpiderNull) return sp;
 //            Log.i("PyLoader", "echo-getSpider homeContent: " + sp.homeContent(true));
@@ -73,6 +83,7 @@ public class pyLoader implements IPyLoader {
 
     @Override
     public Object[] proxyInvoke(Map<String, String> params, String key){
+        if (!isPythonSupported()) return null;
         if(key==null || key.isEmpty())return null;
         LOG.i("echo-recentPyKey" + key);
         try {
@@ -94,5 +105,18 @@ public class pyLoader implements IPyLoader {
             urlBuilder.append(api.contains("?") ? "&" : "?").append("extend=").append(ext);
         }
         return urlBuilder.toString();
+    }
+
+    private PythonLoader getPythonLoader() {
+        if (pythonLoader == null) {
+            pythonLoader = PythonLoader.getInstance().setApplication(App.getInstance());
+        }
+        return pythonLoader;
+    }
+
+    private boolean isPythonSupported() {
+        if (Build.VERSION.SDK_INT < 36) return true;
+        if (Build.VERSION.SDK_INT < 23) return true;
+        return android.os.Process.is64Bit();
     }
 }

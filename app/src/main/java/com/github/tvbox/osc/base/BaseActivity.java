@@ -29,6 +29,7 @@ import java.io.File;
 import java.io.IOException;
 import java.io.InputStreamReader;
 
+import me.jessyan.autosize.AutoSizeConfig;
 import me.jessyan.autosize.AutoSizeCompat;
 import me.jessyan.autosize.internal.CustomAdapt;
 import xyz.doikki.videoplayer.util.CutoutUtil;
@@ -43,6 +44,12 @@ public abstract class BaseActivity extends AppCompatActivity implements CustomAd
     private LoadService mLoadService;
 
     private static float screenRatio = -100.0f;
+    private final Runnable refreshAutoSizeRunnable = new Runnable() {
+        @Override
+        public void run() {
+            refreshAutoSize();
+        }
+    };
 
     @Override
     protected void onCreate(@Nullable Bundle savedInstanceState) {
@@ -50,9 +57,7 @@ public abstract class BaseActivity extends AppCompatActivity implements CustomAd
             if (screenRatio < 0) {
                 DisplayMetrics dm = new DisplayMetrics();
                 getWindowManager().getDefaultDisplay().getMetrics(dm);
-                int screenWidth = dm.widthPixels;
-                int screenHeight = dm.heightPixels;
-                screenRatio = (float) Math.max(screenWidth, screenHeight) / (float) Math.min(screenWidth, screenHeight);
+                updateScreenRatio(dm);
             }
         } catch (Throwable th) {
             th.printStackTrace();
@@ -70,6 +75,8 @@ public abstract class BaseActivity extends AppCompatActivity implements CustomAd
         super.onResume();
         hideSysBar();
         changeWallpaper(false);
+        refreshAutoSize();
+        scheduleRefreshAutoSize();
     }
 
     public void hideSysBar() {
@@ -81,6 +88,54 @@ public abstract class BaseActivity extends AppCompatActivity implements CustomAd
             uiOptions |= View.SYSTEM_UI_FLAG_HIDE_NAVIGATION;
             uiOptions |= View.SYSTEM_UI_FLAG_FULLSCREEN;
             getWindow().getDecorView().setSystemUiVisibility(uiOptions);
+        }
+    }
+
+    @Override
+    protected void onPause() {
+        super.onPause();
+        getWindow().getDecorView().removeCallbacks(refreshAutoSizeRunnable);
+    }
+
+    @Override
+    public void onWindowFocusChanged(boolean hasFocus) {
+        super.onWindowFocusChanged(hasFocus);
+        if (hasFocus) {
+            hideSysBar();
+            scheduleRefreshAutoSize();
+        }
+    }
+
+    private void scheduleRefreshAutoSize() {
+        View decorView = getWindow().getDecorView();
+        decorView.removeCallbacks(refreshAutoSizeRunnable);
+        decorView.postDelayed(refreshAutoSizeRunnable, 300);
+    }
+
+    private void refreshAutoSize() {
+        try {
+            DisplayMetrics dm = new DisplayMetrics();
+            getWindowManager().getDefaultDisplay().getMetrics(dm);
+            if (dm.widthPixels <= 0 || dm.heightPixels <= 0) {
+                return;
+            }
+            updateScreenRatio(dm);
+            AutoSizeConfig.getInstance()
+                    .setScreenWidth(dm.widthPixels)
+                    .setScreenHeight(dm.heightPixels);
+            AutoSizeCompat.autoConvertDensityOfCustomAdapt(super.getResources(), this);
+            getWindow().getDecorView().requestLayout();
+        } catch (Throwable th) {
+            th.printStackTrace();
+        }
+    }
+
+    private void updateScreenRatio(DisplayMetrics dm) {
+        int screenWidth = dm.widthPixels;
+        int screenHeight = dm.heightPixels;
+        int min = Math.min(screenWidth, screenHeight);
+        if (min > 0) {
+            screenRatio = (float) Math.max(screenWidth, screenHeight) / (float) min;
         }
     }
 
