@@ -149,6 +149,10 @@ public class PythonLoader {
     }
 
     public Spider getSpider(String key, String url) throws Exception {
+        return getSpider(key, url, "");
+    }
+
+    public Spider getSpider(String key, String url, String ext) throws Exception {
         if (app == null) throw new Exception("set application first");
         if (spiders.containsKey(key)) {
             PyLog.d(key + " :缓存加载成功！");
@@ -164,7 +168,7 @@ public class PythonLoader {
             // 提交初始化任务
             future = executor.submit(() -> {
                 try {
-                    sp.init(app, url);
+                    sp.init(app, url, ext);
                 } catch (Exception e) {
                     e.printStackTrace();
                 }

@@ -1,4 +1,4 @@
-package com.github.tvbox.osc.util.js;
+package com.github.catvod.crawler.js;
 
 import android.content.Context;
 import android.text.TextUtils;
@@ -98,7 +98,7 @@ public class JsSpider extends Spider {
     private JSObject cfg(String ext) {
         JSObject cfg = ctx.createJSObject();
         cfg.set("stype", 3);
-        cfg.set("skey", key);
+        cfg.set("skey", TextUtils.isEmpty(siteKey) ? key : siteKey);
         if (Json.invalid(ext)) cfg.set("ext", ext);
         else cfg.set("ext", (JSObject) ctx.parse(ext));
         return cfg;

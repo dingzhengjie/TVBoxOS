@@ -8,8 +8,6 @@ import com.github.tvbox.osc.base.App;
 import com.github.tvbox.osc.util.LOG;
 import com.undcover.freedom.pyramid.PythonLoader;
 import com.undcover.freedom.pyramid.PythonSpider;
-import java.io.UnsupportedEncodingException;
-import java.net.URLEncoder;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -23,7 +21,7 @@ public class pyLoader implements IPyLoader {
     }
 
     @Override
-    public void clear() {
+    public synchronized void clear() {
         spiders.clear();
         if (pythonLoader != null) {
             pythonLoader.clear();
@@ -52,7 +50,7 @@ public class pyLoader implements IPyLoader {
     }
 
     @Override
-    public Spider getSpider(String key, String cls, String ext) {
+    public synchronized Spider getSpider(String key, String cls, String ext) {
         if (!isPythonSupported()) {
             Log.w("PyLoader", "python32 is disabled on Android 16+ 32-bit process.");
             return new SpiderNull();
@@ -62,8 +60,8 @@ public class pyLoader implements IPyLoader {
             return spiders.get(key);
         }
         try {
-            Log.i("PyLoader", "echo-getSpider url: " + getPyUrl(cls, ext));
-            Spider sp = getPythonLoader().getSpider(key, getPyUrl(cls, ext));
+            Log.i("PyLoader", "echo-getSpider url: " + cls);
+            Spider sp = getPythonLoader().getSpider(key, cls, ext);
             if (sp == null) return new SpiderNull();
             if (sp instanceof SpiderNull) return sp;
 //            Log.i("PyLoader", "echo-getSpider homeContent: " + sp.homeContent(true));
@@ -96,15 +94,6 @@ public class pyLoader implements IPyLoader {
             th.printStackTrace();
         }
         return null;
-    }
-
-    private String getPyUrl(String api, String ext) throws UnsupportedEncodingException {
-        StringBuilder urlBuilder = new StringBuilder(api);
-        if (!ext.isEmpty()) {
-            ext = URLEncoder.encode(ext, "UTF-8");
-            urlBuilder.append(api.contains("?") ? "&" : "?").append("extend=").append(ext);
-        }
-        return urlBuilder.toString();
     }
 
     private PythonLoader getPythonLoader() {

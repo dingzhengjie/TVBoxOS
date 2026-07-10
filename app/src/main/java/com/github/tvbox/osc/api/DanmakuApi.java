@@ -11,7 +11,7 @@ import com.github.catvod.net.OkHttp;
 import com.github.tvbox.osc.util.DanmuHelper;
 import com.github.tvbox.osc.util.HawkConfig;
 import com.github.tvbox.osc.util.LOG;
-import com.github.tvbox.osc.util.js.Trans;
+import com.github.catvod.crawler.js.Trans;
 import com.orhanobut.hawk.Hawk;
 
 import org.json.JSONArray;
